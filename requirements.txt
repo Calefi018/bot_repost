@@ -2,3 +2,4 @@ python-telegram-bot
 APScheduler
 Flask
 gunicorn
+aiohttp
