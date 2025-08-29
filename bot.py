@@ -45,11 +45,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuração do Banco de Dados SQLite ---
+# Alterado para criar o arquivo .db na raiz do projeto
 DB_NAME = 'postagens.db'
 
 def init_db():
     """Inicializa a tabela de postagens no banco de dados."""
-    os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -427,7 +427,6 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif command == 'status': await status(update, context)
     elif command == 'ver_lista': await ver_lista(update, context)
     elif command == 'limpar_lista': await limpar_lista(update, context)
-
 
 def main():
     """Inicia o bot."""
