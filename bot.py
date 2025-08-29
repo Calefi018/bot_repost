@@ -1,17 +1,28 @@
 import os
 import logging
 import sqlite3
+import threading  # <-- IMPORTAÇÃO ADICIONADA
 from datetime import datetime
 import asyncio
 import random
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, JobQueue
-from aiohttp import web
-from aiohttp.web import Request, Response
+from flask import Flask, request, jsonify
+
+# --- Servidor Web para manter o Render Ativo ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    """Endpoint simples para o Render verificar se a aplicação está viva."""
+    return "Bot is running!", 200
+
+def run_flask_app():
+    """Inicia o servidor web em uma thread separada."""
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
 # --- Configurações do Bot (Pega do ambiente do Render) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # --- Configuração dos Administradores ---
 try:
