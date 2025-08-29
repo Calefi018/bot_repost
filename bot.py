@@ -6,10 +6,8 @@ import asyncio
 import random
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, JobQueue
-from flask import Flask, request, jsonify
-
-# --- Servidor Web para Webhooks ---
-app = Flask(__name__)
+from aiohttp import web
+from aiohttp.web import Request, Response
 
 # --- Configurações do Bot (Pega do ambiente do Render) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
