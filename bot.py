@@ -45,11 +45,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuração do Banco de Dados SQLite ---
+# Alterado para criar o arquivo .db na raiz do projeto
 DB_NAME = 'postagens.db'
 
 def init_db():
     """Inicializa a tabela de postagens no banco de dados."""
-    os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -428,45 +428,40 @@ async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif command == 'ver_lista': await ver_lista(update, context)
     elif command == 'limpar_lista': await limpar_lista(update, context)
 
-
 def main():
     """Inicia o bot."""
     init_db()
     
-    # Inicie o bot do Telegram em uma nova thread
-    def bot_polling_thread():
-        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
-        
-        # Handlers para comandos
-        application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("set_interval", set_interval, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("agendar", agendar_post, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("ativar", ativar, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("pausar", pausar, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("status", status, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("ver_lista", ver_lista, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("remover", remover, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        application.add_handler(CommandHandler("limpar_lista", limpar_lista, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
-        
-        application.add_handler(CallbackQueryHandler(handle_button_press, pattern=r'^(ativar|pausar|status|ver_lista|limpar_lista)$'))
-
-        application.add_handler(MessageHandler(
-            filters.User(user_id=ADMIN_IDS) & (filters.PHOTO | filters.TEXT) & filters.ChatType.PRIVATE, 
-            handle_new_post
-        ))
-        
-        application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS & filters.Chat(chat_id=GRUPO_ID), boas_vindas))
-        
-        logger.info("Bot 'Postagem Certa' está online e pronto para gerenciar as postagens!")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-    # A thread do bot vai rodar em segundo plano
-    bot_thread = threading.Thread(target=bot_polling_thread)
-    bot_thread.start()
+    # Inicie o servidor web em uma thread separada para manter o Render ativo
+    web_thread = threading.Thread(target=run_flask_app)
+    web_thread.start()
     
-    # Inicia o servidor web do Flask na thread principal
-    # Isso é o que o Render vai ver, mantendo o serviço ativo.
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
+    # Inicie o bot do Telegram na thread principal
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Handlers para comandos
+    application.add_handler(CommandHandler("start", start, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("set_interval", set_interval, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("agendar", agendar_post, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("ativar", ativar, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("pausar", pausar, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("status", status, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("ver_lista", ver_lista, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("remover", remover, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("limpar_lista", limpar_lista, filters=filters.User(user_id=ADMIN_IDS) & filters.ChatType.PRIVATE))
+    
+    application.add_handler(CallbackQueryHandler(handle_button_press, pattern=r'^(ativar|pausar|status|ver_lista|limpar_lista)$'))
+
+    application.add_handler(MessageHandler(
+        filters.User(user_id=ADMIN_IDS) & (filters.PHOTO | filters.TEXT) & filters.ChatType.PRIVATE, 
+        handle_new_post
+    ))
+    
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS & filters.Chat(chat_id=GRUPO_ID), boas_vindas))
+    
+    logger.info("Bot 'Postagem Certa' está online e pronto para gerenciar as postagens!")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == '__main__':
     main()
