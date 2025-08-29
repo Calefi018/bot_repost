@@ -1,7 +1,6 @@
 import os
 import logging
 import sqlite3
-import threading
 from datetime import datetime
 import asyncio
 import random
@@ -9,20 +8,12 @@ from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboa
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, JobQueue
 from flask import Flask, request, jsonify
 
-# --- Servidor Web para manter o Render Ativo ---
+# --- Servidor Web para Webhooks ---
 app = Flask(__name__)
-
-@app.route('/')
-def home():
-    """Endpoint simples para o Render verificar se a aplicação está viva."""
-    return "Bot is running!", 200
-
-def run_flask_app():
-    """Inicia o servidor web em uma thread separada."""
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 8080)))
 
 # --- Configurações do Bot (Pega do ambiente do Render) ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 # --- Configuração dos Administradores ---
 try:
@@ -45,7 +36,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --- Configuração do Banco de Dados SQLite ---
-# Alterado para criar o arquivo .db na raiz do projeto
 DB_NAME = 'postagens.db'
 
 def init_db():
