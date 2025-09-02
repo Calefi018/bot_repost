@@ -1,5 +1,2 @@
-python-telegram-bot
-APScheduler
-Flask
-gunicorn
-aiohttp
+python-telegram-bot[ext]>=20.0
+psycopg2-binary
