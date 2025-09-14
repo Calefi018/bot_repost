@@ -95,11 +95,11 @@ async def post_init(application: Application):
     await application.bot.set_my_commands(user_commands)
     admin_commands = [
         BotCommand("start", "▶️ Exibe o menu de admin"),
-        BotCommand("criar", "✨ Gera um novo post (com Teste A/B)"),
+        BotCommand("criar", "✨ Gera um novo post"),
         BotCommand("enviar_dm", "🚀 Envia um lançamento para os inscritos"),
         BotCommand("convidar", "💌 Posta um convite de inscrição no grupo"),
         BotCommand("status", "📊 Verifica o status atual do bot"),
-        BotCommand("verificar", "🔍 Verifica se um link já existe na lista"),
+        BotCommand("verificar", "🔍 Verifica se um link já existe"),
         BotCommand("ativar", "✅ Ativa o envio automático"),
         BotCommand("pausar", "⏸️ Pausa o envio automático"),
         BotCommand("ver_lista", "📋 Mostra e permite editar posts"),
@@ -135,14 +135,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if user.id in ADMIN_IDS:
+        # NOVO MENU DE BOTÕES COMPLETO
         keyboard = [
-            [InlineKeyboardButton("▶️ Ativar Envios", callback_data='ativar'), InlineKeyboardButton("⏸️ Pausar Envios", callback_data='pausar')],
-            [InlineKeyboardButton("📋 Ver Lista", callback_data='ver_lista'), InlineKeyboardButton("📊 Status", callback_data='status')],
-            [InlineKeyboardButton("🔗 Gerar Lista de Links", callback_data='gerar_lista_links')],
-            [InlineKeyboardButton("🔥 Limpar Lista", callback_data='limpar_lista')],
+            [
+                InlineKeyboardButton("▶️ Ativar Envios", callback_data='ativar'),
+                InlineKeyboardButton("⏸️ Pausar Envios", callback_data='pausar')
+            ],
+            [
+                InlineKeyboardButton("✨ Criar Post", callback_data='menu_criar'),
+                InlineKeyboardButton("📋 Ver/Editar Lista", callback_data='menu_ver_lista')
+            ],
+            [
+                InlineKeyboardButton("🗑️ Remover Post", callback_data='menu_remover'),
+                InlineKeyboardButton("🔥 Limpar Lista", callback_data='limpar_lista')
+            ],
+            [
+                InlineKeyboardButton("📊 Status", callback_data='status'),
+                InlineKeyboardButton("🔗 Gerar Lista Links", callback_data='gerar_lista_links')
+                
+            ],
+            [
+                InlineKeyboardButton("🚀 Enviar DM", callback_data='menu_enviar_dm'),
+                InlineKeyboardButton("💌 Convidar p/ Grupo", callback_data='convidar')
+            ],
+            [
+                InlineKeyboardButton("⏱️ Definir Intervalo", callback_data='menu_set_interval'),
+                InlineKeyboardButton("🔍 Verificar Link", callback_data='menu_verificar')
+            ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text('Olá, administrador! Use os botões ou o menu de comandos (`/`).', reply_markup=reply_markup)
+        await update.message.reply_text('🤖 *Menu de Administrador*\n\nSelecione uma opção ou use o menu de comandos (`/`).', 
+                                        reply_markup=reply_markup, parse_mode='Markdown')
     else:
         await update.message.reply_text('Olá! Aguarde o convite de inscrição no grupo.')
 
@@ -172,8 +195,14 @@ async def boas_vindas_e_convite(update: Update, context: ContextTypes.DEFAULT_TY
 # --- Seção do Gerador de Posts Interativo (/criar) ---
 async def iniciar_criacao(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_user.id not in ADMIN_IDS: return ConversationHandler.END
+    
+    chat = update.effective_chat
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_reply_markup(reply_markup=None) # Remove o menu de botões
+
     context.user_data.clear()
-    await update.message.reply_text("Vamos criar um novo post. Para cancelar, digite /cancelar.\n\n1️⃣ Envie o link da promoção:")
+    await chat.send_message("Vamos criar um novo post. Para cancelar, digite /cancelar.\n\n1️⃣ Envie o link da promoção:")
     return LINK
 
 async def receber_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -268,17 +297,33 @@ async def cancelar_criacao(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 # --- Seção de Inscrição e Broadcast Privado ---
 async def convidar_inscricao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+
     bot_username = (await context.bot.get_me()).username
     deep_link = f"https://t.me/{bot_username}?start=inscrever"
     keyboard = [[InlineKeyboardButton("Quero me Inscrever Gratuitamente! 🚀", url=deep_link)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await context.bot.send_message(chat_id=GRUPO_ID, text="💎 *Quer receber nossos lançamentos em primeira mão?* 💎\n\nClique no botão abaixo para se inscrever!", reply_markup=reply_markup, parse_mode='MarkdownV2')
-    await update.message.reply_text("✅ Convite enviado para o grupo!")
+    
+    try:
+        await context.bot.send_message(chat_id=GRUPO_ID, text="💎 *Quer receber nossos lançamentos em primeira mão?* 💎\n\nClique no botão abaixo para se inscrever!", reply_markup=reply_markup, parse_mode='MarkdownV2')
+        await message_callable.reply_text("✅ Convite enviado para o grupo!")
+    except Exception as e:
+        logger.error(f"Erro ao enviar convite para o grupo {GRUPO_ID}: {e}")
+        await message_callable.reply_text(f"❌ Erro ao enviar convite. Verifique se o bot está no grupo e se o ID `{GRUPO_ID}` está correto.")
 
 async def iniciar_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_user.id not in ADMIN_IDS: return ConversationHandler.END
-    await update.message.reply_text("Envie a mensagem a ser transmitida para os inscritos.\n\nDigite /cancelar para abortar.")
+    
+    chat = update.effective_chat
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_reply_markup(reply_markup=None)
+
+    await chat.send_message("Envie a mensagem a ser transmitida para os inscritos.\n\nDigite /cancelar para abortar.")
     return MENSAGEM_BROADCAST
 
 async def receber_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -381,6 +426,10 @@ async def verificar_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gerar_lista_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+
     await message_callable.reply_text("🔎 Lendo todos os posts...")
     conn = db_connect()
     postagens = []
@@ -485,6 +534,10 @@ async def job_send_post(context: ContextTypes.DEFAULT_TYPE):
 async def ativar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+
+    if update.callback_query:
+        await update.callback_query.answer()
+        
     if context.job_queue.get_jobs_by_name("postagem_automatica"):
         await message_callable.reply_text("O envio automático já está ativo.")
         return
@@ -495,6 +548,10 @@ async def ativar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+
     job = context.job_queue.get_jobs_by_name("postagem_automatica")
     if not job:
         await message_callable.reply_text("O envio automático já está pausado.")
@@ -505,6 +562,10 @@ async def pausar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+
     conn = db_connect()
     count = 0
     inscritos_count = 0
@@ -563,6 +624,10 @@ async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def limpar_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+
     conn = db_connect()
     try:
         with conn.cursor() as cursor:
@@ -575,25 +640,38 @@ async def limpar_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         if conn: conn.close()
 
+# --- Handler para os botões do menu ---
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    # Comandos diretos
     if data == 'ativar': await ativar(update, context)
     elif data == 'pausar': await pausar(update, context)
     elif data == 'status': await status(update, context)
-    elif data == 'ver_lista': await ver_lista(update, context)
     elif data == 'gerar_lista_links': await gerar_lista_links(update, context)
     elif data == 'limpar_lista': await limpar_lista(update, context)
+    elif data == 'convidar': await convidar_inscricao(update, context)
+    
+    # Comandos que precisam de instrução
+    elif data == 'menu_remover':
+        await query.message.reply_text("ℹ️ Para remover um post, use o comando no formato:\n`/remover <ID>`")
+    elif data == 'menu_set_interval':
+        await query.message.reply_text("ℹ️ Para definir o intervalo, use o comando no formato:\n`/set_interval <minutos>`")
+    elif data == 'menu_verificar':
+        await query.message.reply_text("ℹ️ Para verificar um link, use o comando no formato:\n`/verificar <link>`")
 
 
-# --- NOVA CONVERSA DE EDIÇÃO ---
-
+# --- Conversa de Edição (/ver_lista) ---
 async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """ Inicia a conversa de visualização/edição, mostrando a lista de posts. """
-    message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
     if update.effective_user.id not in ADMIN_IDS: return ConversationHandler.END
     
+    chat = update.effective_chat
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_reply_markup(reply_markup=None)
+
     conn = db_connect()
     postagens = []
     try:
@@ -606,7 +684,7 @@ async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         if conn: conn.close()
         
     if not postagens:
-        await message_callable.reply_text("A lista de postagens está vazia.")
+        await chat.send_message("A lista de postagens está vazia.")
         return ConversationHandler.END
 
     header = "📋 *Lista de Postagens Salvas:*\n\n"
@@ -619,19 +697,18 @@ async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         line = f"*ID:* `{post_id}`{tipo} \\| *Texto:* _{preview}{reticencias}_\n"
         
         if len(message_chunk) + len(line) > 4000:
-            await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
+            await chat.send_message(message_chunk, parse_mode='MarkdownV2')
             message_chunk = ""
         message_chunk += line
     
     if message_chunk != header:
-        await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
+        await chat.send_message(message_chunk, parse_mode='MarkdownV2')
     
-    await message_callable.reply_text("Para visualizar ou editar um post, envie o número do ID.\nPara sair, digite /cancelar.")
+    await chat.send_message("Para visualizar ou editar um post, envie o número do ID.\nPara sair, digite /cancelar.")
     
     return SELECTING_POST
 
 async def selecionar_post_para_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """ Recebe o ID do post, busca no DB e o exibe com opções. """
     try:
         post_id = int(update.message.text)
     except ValueError:
@@ -675,7 +752,6 @@ async def selecionar_post_para_ver(update: Update, context: ContextTypes.DEFAULT
     return ACTION_POST
 
 async def acao_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """ Lida com o clique no botão 'Editar' ou 'Ignorar'. """
     query = update.callback_query
     await query.answer()
     
@@ -695,7 +771,6 @@ async def acao_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return ConversationHandler.END
 
 async def cancelar_edicao(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """ Cancela a operação de visualização/edição. """
     await update.message.reply_text("Processo de visualização/edição cancelado.")
     context.user_data.clear()
     return ConversationHandler.END
@@ -708,7 +783,10 @@ def main():
 
     # Conversa para /criar
     conv_handler_criar = ConversationHandler(
-        entry_points=[CommandHandler('criar', iniciar_criacao)],
+        entry_points=[
+            CommandHandler('criar', iniciar_criacao),
+            CallbackQueryHandler(iniciar_criacao, pattern='^menu_criar$')
+        ],
         states={
             LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_link)],
             BONUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_bonus)],
@@ -725,14 +803,20 @@ def main():
 
     # Conversa para /enviar_dm
     conv_handler_broadcast = ConversationHandler(
-        entry_points=[CommandHandler('enviar_dm', iniciar_broadcast)],
+        entry_points=[
+            CommandHandler('enviar_dm', iniciar_broadcast),
+            CallbackQueryHandler(iniciar_broadcast, pattern='^menu_enviar_dm$')
+        ],
         states={ MENSAGEM_BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, receber_broadcast)] },
         fallbacks=[CommandHandler('cancelar', cancelar_broadcast)],
     )
     
     # Conversa para o comando /ver_lista interativo
     conv_handler_ver_lista = ConversationHandler(
-        entry_points=[CommandHandler('ver_lista', ver_lista)],
+        entry_points=[
+            CommandHandler('ver_lista', ver_lista),
+            CallbackQueryHandler(ver_lista, pattern='^menu_ver_lista$')
+        ],
         states={
             SELECTING_POST: [MessageHandler(filters.Regex(r'^\d+$'), selecionar_post_para_ver)],
             ACTION_POST: [CallbackQueryHandler(pattern=r'^(edit|ignore)_\d+$', callback=acao_post)],
