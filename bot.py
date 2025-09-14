@@ -569,7 +569,9 @@ async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tipo = " \\(Teste A/B\\)" if texto_b else ""
         preview_raw = texto_a.replace('\n', ' ')[:50]
         preview = escape_markdown(preview_raw, version=2)
-        line = f"*ID:* `{post_id}`{tipo} \\| *Texto:* _{preview}{'\\.\\.\\.' if len(texto_a) > 50 else ''}_\n"
+        # A CORREÇÃO
+        reticencias = '\\.\\.\\.' if len(texto_a) > 50 else ''
+        line = f"*ID:* `{post_id}`{tipo} \\| *Texto:* _{preview}{reticencias}_\n"
         if len(message_chunk) + len(line) > 4000:
             await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
             message_chunk = ""
