@@ -30,26 +30,29 @@ except (ValueError, TypeError) as e:
     print(f"ERRO: Verifique se as variáveis de ambiente estão configuradas corretamente. Erro: {e}")
     exit()
 
-# --- Configuração de Logging e DB_NAME (DB_NAME não é mais usado) ---
+# --- Configuração de Logging ---
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- Definição dos estados das conversas ---
+# Para /criar
 (LINK, BONUS, ROLLOVER, MIN_SAQUE, GET_TEXT_A,
  ASK_AB_TEST, GET_TEXT_B, LANCAMENTO) = range(8)
+# Para /enviar_dm
 MENSAGEM_BROADCAST = range(8, 9)
+# Para a nova função /ver_lista interativa
+SELECTING_POST, ACTION_POST = range(9, 11)
 
-# --- Funções do Banco de Dados (Adaptadas para PostgreSQL) ---
+
+# --- Funções do Banco de Dados ---
 def db_connect():
     """ Conecta ao banco de dados PostgreSQL usando a DATABASE_URL. """
     try:
-        conn = psycopg2.connect(DATABASE_URL) # Em produção na Render, sslmode=require é automático
+        conn = psycopg2.connect(DATABASE_URL)
         return conn
     except Exception as e:
         logger.error(f"Erro ao conectar ao PostgreSQL: {e}")
         return None
-
-# A função migrar_db() foi removida pois não é necessária para um banco de dados novo na nuvem.
 
 def init_db():
     """ Inicializa as tabelas no banco de dados PostgreSQL se não existirem. """
@@ -60,7 +63,6 @@ def init_db():
     
     try:
         with conn.cursor() as cursor:
-            # Tabela postagens com tipos de dados do PostgreSQL
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS postagens (
                     id SERIAL PRIMARY KEY,
@@ -71,7 +73,6 @@ def init_db():
                     data_adicao TEXT NOT NULL
                 )
             ''')
-            # Tabela inscritos
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS inscritos (
                     user_id BIGINT PRIMARY KEY,
@@ -83,7 +84,7 @@ def init_db():
     except Exception as e:
         logger.error(f"Erro ao inicializar tabelas: {e}")
     finally:
-        conn.close()
+        if conn: conn.close()
 
 # --- Funções de Inicialização do Bot ---
 async def post_init(application: Application):
@@ -101,7 +102,7 @@ async def post_init(application: Application):
         BotCommand("verificar", "🔍 Verifica se um link já existe na lista"),
         BotCommand("ativar", "✅ Ativa o envio automático"),
         BotCommand("pausar", "⏸️ Pausa o envio automático"),
-        BotCommand("ver_lista", "📋 Mostra a lista de posts salvos"),
+        BotCommand("ver_lista", "📋 Mostra e permite editar posts"),
         BotCommand("gerar_lista_links", "🔗 Gera uma lista com os links únicos"),
         BotCommand("set_interval", "⏱️ Define o intervalo entre os posts"),
         BotCommand("remover", "🗑️ Remove um post pelo ID"),
@@ -120,7 +121,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn = db_connect()
         try:
             with conn.cursor() as cursor:
-                # Placeholders no psycopg2 são %s
                 cursor.execute("INSERT INTO inscritos (user_id, data_inscricao) VALUES (%s, %s) ON CONFLICT (user_id) DO NOTHING", 
                                (user.id, datetime.now().isoformat()))
             conn.commit()
@@ -367,18 +367,16 @@ async def verificar_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 posts_encontrados = cursor.fetchall()
                 if posts_encontrados:
                     ids_str = ', '.join([str(post[0]) for post in posts_encontrados])
-                    resultados.append(f"*ENCONTRADO*\nO link `{escape_markdown(link, 2)}` está no\\(s\\) post\\(s\\) de ID: *{ids_str}*")
+                    resultados.append(f"*ENCONTRADO*\nO link `{escape_markdown(link, 2)}` está no\\(s\\) post\\(s\\) de ID: *_{ids_str}_*")
                 else:
                     resultados.append(f"*NÃO ENCONTRADO*\nO link `{escape_markdown(link, 2)}` não está salvo\\.")
     except Exception as e:
         logger.error(f"Erro ao verificar links: {e}")
+        await update.message.reply_text("Ocorreu um erro ao verificar os links.")
     finally:
         if conn: conn.close()
         
     await update.message.reply_text("\n\n---\n\n".join(resultados), parse_mode='MarkdownV2')
-
-# ... (O restante do seu código, como gerar_lista_links, job_send_post, ativar, pausar, status, etc.,
-# continua igual, mas com as devidas alterações nos placeholders das queries SQL de ? para %s)
 
 async def gerar_lista_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
@@ -402,7 +400,7 @@ async def gerar_lista_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     all_links = []
     url_pattern = re.compile(r'https?://[^\s]+')
     for texto_a, texto_b in postagens:
-        all_links.extend(url_pattern.findall(texto_a))
+        if texto_a: all_links.extend(url_pattern.findall(texto_a))
         if texto_b: all_links.extend(url_pattern.findall(texto_b))
     
     if not all_links:
@@ -545,41 +543,6 @@ async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except (IndexError, ValueError):
         await update.message.reply_text("Uso: /set_interval <minutos>")
 
-async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
-    if update.effective_user.id not in ADMIN_IDS: return
-    conn = db_connect()
-    postagens = []
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute('SELECT id, texto_a, texto_b FROM postagens ORDER BY id ASC')
-            postagens = cursor.fetchall()
-    except Exception as e:
-        logger.error(f"Erro ao ver lista: {e}")
-    finally:
-        if conn: conn.close()
-        
-    if not postagens:
-        await message_callable.reply_text("A lista de postagens está vazia.")
-        return
-
-    header = "📋 *Lista de Postagens Salvas:*\n\n"
-    message_chunk = header
-    for post_id, texto_a, texto_b in postagens:
-        tipo = " \\(Teste A/B\\)" if texto_b else ""
-        preview_raw = texto_a.replace('\n', ' ')[:50]
-        preview = escape_markdown(preview_raw, version=2)
-        # A CORREÇÃO
-        reticencias = '\\.\\.\\.' if len(texto_a) > 50 else ''
-        line = f"*ID:* `{post_id}`{tipo} \\| *Texto:* _{preview}{reticencias}_\n"
-        if len(message_chunk) + len(line) > 4000:
-            await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
-            message_chunk = ""
-        message_chunk += line
-    
-    if message_chunk != header:
-        await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
-
 async def remover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     try:
@@ -622,13 +585,128 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif data == 'ver_lista': await ver_lista(update, context)
     elif data == 'gerar_lista_links': await gerar_lista_links(update, context)
     elif data == 'limpar_lista': await limpar_lista(update, context)
+
+
+# --- NOVA CONVERSA DE EDIÇÃO ---
+
+async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """ Inicia a conversa de visualização/edição, mostrando a lista de posts. """
+    message_callable = update.callback_query.message if hasattr(update, 'callback_query') and update.callback_query else update.message
+    if update.effective_user.id not in ADMIN_IDS: return ConversationHandler.END
     
+    conn = db_connect()
+    postagens = []
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT id, texto_a, texto_b FROM postagens ORDER BY id ASC')
+            postagens = cursor.fetchall()
+    except Exception as e:
+        logger.error(f"Erro ao ver lista: {e}")
+    finally:
+        if conn: conn.close()
+        
+    if not postagens:
+        await message_callable.reply_text("A lista de postagens está vazia.")
+        return ConversationHandler.END
+
+    header = "📋 *Lista de Postagens Salvas:*\n\n"
+    message_chunk = header
+    for post_id, texto_a, texto_b in postagens:
+        tipo = " \\(Teste A/B\\)" if texto_b else ""
+        preview_raw = texto_a.replace('\n', ' ')[:50]
+        preview = escape_markdown(preview_raw, version=2)
+        reticencias = '\\.\\.\\.' if len(texto_a) > 50 else ''
+        line = f"*ID:* `{post_id}`{tipo} \\| *Texto:* _{preview}{reticencias}_\n"
+        
+        if len(message_chunk) + len(line) > 4000:
+            await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
+            message_chunk = ""
+        message_chunk += line
+    
+    if message_chunk != header:
+        await message_callable.reply_text(message_chunk, parse_mode='MarkdownV2')
+    
+    await message_callable.reply_text("Para visualizar ou editar um post, envie o número do ID.\nPara sair, digite /cancelar.")
+    
+    return SELECTING_POST
+
+async def selecionar_post_para_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """ Recebe o ID do post, busca no DB e o exibe com opções. """
+    try:
+        post_id = int(update.message.text)
+    except ValueError:
+        await update.message.reply_text("Por favor, envie um número de ID válido.")
+        return SELECTING_POST
+
+    conn = db_connect()
+    postagem = None
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('SELECT texto_a, texto_b FROM postagens WHERE id = %s', (post_id,))
+            postagem = cursor.fetchone()
+    finally:
+        if conn: conn.close()
+
+    if not postagem:
+        await update.message.reply_text(f"❌ Post com ID {post_id} não encontrado. Tente outro ID ou digite /cancelar.")
+        return SELECTING_POST
+
+    context.user_data['post_id_para_editar'] = post_id
+    texto_a, texto_b = postagem
+
+    mensagem_preview = f"👓 *Visualizando Post ID: {post_id}*\n\n"
+    mensagem_preview += "--- VERSÃO A ---\n"
+    mensagem_preview += texto_a
+
+    if texto_b:
+        mensagem_preview += "\n\n--- VERSÃO B ---\n"
+        mensagem_preview += texto_b
+
+    keyboard = [
+        [
+            InlineKeyboardButton("✍️ Editar", callback_data=f"edit_{post_id}"),
+            InlineKeyboardButton("✅ Ignorar", callback_data=f"ignore_{post_id}")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(mensagem_preview, reply_markup=reply_markup)
+    
+    return ACTION_POST
+
+async def acao_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """ Lida com o clique no botão 'Editar' ou 'Ignorar'. """
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    action, post_id_str = data.split('_')
+    post_id = int(post_id_str)
+    
+    if action == 'ignore':
+        await query.edit_message_text(f"Ok, visualização do post {post_id} concluída.", reply_markup=None)
+        context.user_data.clear()
+        return ConversationHandler.END
+        
+    elif action == 'edit':
+        await query.edit_message_text(f"📝 Modo de edição para o post {post_id} ativado.", reply_markup=None)
+        await query.message.reply_text("A funcionalidade de edição completa ainda será implementada.\n\nPor enquanto, para editar, você pode usar /remover e /criar novamente.\n\nUse /cancelar para sair.")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+async def cancelar_edicao(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """ Cancela a operação de visualização/edição. """
+    await update.message.reply_text("Processo de visualização/edição cancelado.")
+    context.user_data.clear()
+    return ConversationHandler.END
+
 # --- Função Principal (main) ---
 def main():
     init_db()
     
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).concurrent_updates(True).build()
 
+    # Conversa para /criar
     conv_handler_criar = ConversationHandler(
         entry_points=[CommandHandler('criar', iniciar_criacao)],
         states={
@@ -645,16 +723,29 @@ def main():
         conversation_timeout=600
     )
 
+    # Conversa para /enviar_dm
     conv_handler_broadcast = ConversationHandler(
         entry_points=[CommandHandler('enviar_dm', iniciar_broadcast)],
         states={ MENSAGEM_BROADCAST: [MessageHandler(filters.ALL & ~filters.COMMAND, receber_broadcast)] },
         fallbacks=[CommandHandler('cancelar', cancelar_broadcast)],
     )
     
+    # Conversa para o comando /ver_lista interativo
+    conv_handler_ver_lista = ConversationHandler(
+        entry_points=[CommandHandler('ver_lista', ver_lista)],
+        states={
+            SELECTING_POST: [MessageHandler(filters.Regex(r'^\d+$'), selecionar_post_para_ver)],
+            ACTION_POST: [CallbackQueryHandler(pattern=r'^(edit|ignore)_\d+$', callback=acao_post)],
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar_edicao)],
+        conversation_timeout=300 
+    )
+    
     application.add_handler(conv_handler_criar)
     application.add_handler(conv_handler_broadcast)
+    application.add_handler(conv_handler_ver_lista)
     
-    # Comandos
+    # Comandos que NÃO são parte de conversas
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cancelar_inscricao", cancelar_inscricao))
     application.add_handler(CommandHandler("convidar", convidar_inscricao))
@@ -662,12 +753,12 @@ def main():
     application.add_handler(CommandHandler("pausar", pausar))
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("set_interval", set_interval))
-    application.add_handler(CommandHandler("ver_lista", ver_lista))
     application.add_handler(CommandHandler("remover", remover))
     application.add_handler(CommandHandler("limpar_lista", limpar_lista))
     application.add_handler(CommandHandler("gerar_lista_links", gerar_lista_links))
     application.add_handler(CommandHandler("verificar", verificar_links))
 
+    # Manipulador de botões de menu
     application.add_handler(CallbackQueryHandler(button_handler))
     
     # Mensagens
@@ -679,6 +770,7 @@ def main():
     
     logger.info("Bot está online e pronto para operar!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == '__main__':
     main()
