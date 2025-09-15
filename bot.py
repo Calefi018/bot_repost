@@ -1,3 +1,5 @@
+# --- CÓDIGO COMPLETO E REVISADO ---
+
 import os
 import logging
 from datetime import datetime
@@ -6,7 +8,7 @@ import random
 import re
 from telegram import Update, BotCommand, BotCommandScopeChat, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.helpers import escape_markdown
-from telegram.error import Forbidden
+from telegram.error import Forbidden, BadRequest
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -135,7 +137,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if user.id in ADMIN_IDS:
-        # NOVO MENU DE BOTÕES COMPLETO
         keyboard = [
             [
                 InlineKeyboardButton("▶️ Ativar Envios", callback_data='ativar'),
@@ -199,7 +200,7 @@ async def iniciar_criacao(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat = update.effective_chat
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.edit_reply_markup(reply_markup=None) # Remove o menu de botões
+        await update.callback_query.message.edit_reply_markup(reply_markup=None) 
 
     context.user_data.clear()
     await chat.send_message("Vamos criar um novo post. Para cancelar, digite /cancelar.\n\n1️⃣ Envie o link da promoção:")
@@ -313,7 +314,7 @@ async def convidar_inscricao(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await message_callable.reply_text("✅ Convite enviado para o grupo!")
     except Exception as e:
         logger.error(f"Erro ao enviar convite para o grupo {GRUPO_ID}: {e}")
-        await message_callable.reply_text(f"❌ Erro ao enviar convite. Verifique se o bot está no grupo e se o ID `{GRUPO_ID}` está correto.")
+        await message_callable.reply_text(f"❌ Erro ao enviar convite. Verifique se o bot está no grupo, se é admin, e se o ID `{GRUPO_ID}` está correto.")
 
 async def iniciar_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     if update.effective_user.id not in ADMIN_IDS: return ConversationHandler.END
@@ -592,7 +593,14 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intervalo, proximo_envio = job[0].interval, job[0].next_t.strftime("%H:%M:%S de %d/%m/%Y")
         status_str += f"🚀 Envio automático: *ATIVO* \\(a cada {intervalo/60:.0f} min\\)\n⏰ Próximo envio: {proximo_envio}"
     else: status_str += "🛑 Envio automático: *PAUSADO*"
-    await message_callable.reply_text(status_str, parse_mode='MarkdownV2')
+    
+    try:
+        await message_callable.reply_text(status_str, parse_mode='MarkdownV2')
+    except BadRequest as e:
+        logger.error(f"Erro de Markdown no /status: {e}")
+        # Se o MarkdownV2 falhar, envie como texto simples
+        status_str_plain = status_str.replace('*', '').replace('`', '').replace('\\(', '(').replace('\\)', ')')
+        await message_callable.reply_text(status_str_plain)
 
 async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
@@ -640,28 +648,21 @@ async def limpar_lista(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         if conn: conn.close()
 
-# --- Handler para os botões do menu ---
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+# --- Handlers para botões que dão instruções ---
+async def menu_remover_instrucoes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    data = query.data
+    await query.message.reply_text("ℹ️ Para remover um post, use o comando no formato:\n`/remover <ID>`")
 
-    # Comandos diretos
-    if data == 'ativar': await ativar(update, context)
-    elif data == 'pausar': await pausar(update, context)
-    elif data == 'status': await status(update, context)
-    elif data == 'gerar_lista_links': await gerar_lista_links(update, context)
-    elif data == 'limpar_lista': await limpar_lista(update, context)
-    elif data == 'convidar': await convidar_inscricao(update, context)
-    
-    # Comandos que precisam de instrução
-    elif data == 'menu_remover':
-        await query.message.reply_text("ℹ️ Para remover um post, use o comando no formato:\n`/remover <ID>`")
-    elif data == 'menu_set_interval':
-        await query.message.reply_text("ℹ️ Para definir o intervalo, use o comando no formato:\n`/set_interval <minutos>`")
-    elif data == 'menu_verificar':
-        await query.message.reply_text("ℹ️ Para verificar um link, use o comando no formato:\n`/verificar <link>`")
+async def menu_set_interval_instrucoes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("ℹ️ Para definir o intervalo, use o comando no formato:\n`/set_interval <minutos>`")
 
+async def menu_verificar_instrucoes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text("ℹ️ Para verificar um link, use o comando no formato:\n`/verificar <link>`")
 
 # --- Conversa de Edição (/ver_lista) ---
 async def ver_lista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -781,7 +782,7 @@ def main():
     
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).concurrent_updates(True).build()
 
-    # Conversa para /criar
+    # --- Handlers de Conversa ---
     conv_handler_criar = ConversationHandler(
         entry_points=[
             CommandHandler('criar', iniciar_criacao),
@@ -801,7 +802,6 @@ def main():
         conversation_timeout=600
     )
 
-    # Conversa para /enviar_dm
     conv_handler_broadcast = ConversationHandler(
         entry_points=[
             CommandHandler('enviar_dm', iniciar_broadcast),
@@ -811,7 +811,6 @@ def main():
         fallbacks=[CommandHandler('cancelar', cancelar_broadcast)],
     )
     
-    # Conversa para o comando /ver_lista interativo
     conv_handler_ver_lista = ConversationHandler(
         entry_points=[
             CommandHandler('ver_lista', ver_lista),
@@ -829,7 +828,7 @@ def main():
     application.add_handler(conv_handler_broadcast)
     application.add_handler(conv_handler_ver_lista)
     
-    # Comandos que NÃO são parte de conversas
+    # --- Handlers de Comandos Individuais ---
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cancelar_inscricao", cancelar_inscricao))
     application.add_handler(CommandHandler("convidar", convidar_inscricao))
@@ -842,10 +841,18 @@ def main():
     application.add_handler(CommandHandler("gerar_lista_links", gerar_lista_links))
     application.add_handler(CommandHandler("verificar", verificar_links))
 
-    # Manipulador de botões de menu
-    application.add_handler(CallbackQueryHandler(button_handler))
+    # --- ESTRUTURA ROBUSTA: Handlers de Botões do Menu Dedicados ---
+    application.add_handler(CallbackQueryHandler(ativar, pattern='^ativar$'))
+    application.add_handler(CallbackQueryHandler(pausar, pattern='^pausar$'))
+    application.add_handler(CallbackQueryHandler(status, pattern='^status$'))
+    application.add_handler(CallbackQueryHandler(gerar_lista_links, pattern='^gerar_lista_links$'))
+    application.add_handler(CallbackQueryHandler(limpar_lista, pattern='^limpar_lista$'))
+    application.add_handler(CallbackQueryHandler(convidar_inscricao, pattern='^convidar$'))
+    application.add_handler(CallbackQueryHandler(menu_remover_instrucoes, pattern='^menu_remover$'))
+    application.add_handler(CallbackQueryHandler(menu_set_interval_instrucoes, pattern='^menu_set_interval$'))
+    application.add_handler(CallbackQueryHandler(menu_verificar_instrucoes, pattern='^menu_verificar$'))
     
-    # Mensagens
+    # --- Handlers de Mensagem ---
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, boas_vindas_e_convite))
     application.add_handler(MessageHandler(
         filters.User(user_id=ADMIN_IDS) & (filters.PHOTO | filters.TEXT) & filters.ChatType.PRIVATE & ~filters.COMMAND, 
